@@ -2,12 +2,9 @@ import requests
 from bs4 import BeautifulSoup
 import os
 
-# Scrape.do API key (stored in GitHub Actions secrets)
+# Secrets injected from GitHub Actions
 SCRAPE_API_KEY = os.getenv("SCRAPE_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-# Your Make.com webhook URL
-WEBHOOK_URL = "https://hook.eu1.make.com/your-webhook-id"
 
 # List of usernames to monitor
 USERNAMES = [
