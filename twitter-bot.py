@@ -1,27 +1,13 @@
-import feedparser
 import requests
+from bs4 import BeautifulSoup
 import os
 
-# List of Nitter instances to try in order
-NITTER_INSTANCES = [
-    "https://nitter.net",
-    "https://nitter.privacydev.net",
-    "https://nitter.poast.org",
-    "https://nitter.tiekoetter.com",
-    "https://nitter.catsarch.com",
-    "https://nitter.pek.li",
-    "https://nitter.aishiteiru.moe",
-    "https://nitter.aosus.link",
-    "https://nitter.10qt.net",
-    "https://nitter.anoxinon.de",
-    "https://nitter.alt.biovictor.com",
-    "https://nitter.batsense.net",
-    "https://nitter.bird.froth.zone",
-]
+# Scrape.do API key (stored in GitHub Actions secrets)
+SCRAPE_API_KEY = os.getenv("SCRAPE_API_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# Track instance health (fail counts)
-INSTANCE_FAILS = {instance: 0 for instance in NITTER_INSTANCES}
-FAIL_THRESHOLD = 3  # remove instance after 3 failures
+# Your Make.com webhook URL
+WEBHOOK_URL = "https://hook.eu1.make.com/your-webhook-id"
 
 # List of usernames to monitor
 USERNAMES = [
@@ -30,9 +16,6 @@ USERNAMES = [
     "illuminatibot",
     "redpillb0t",
 ]
-
-# Your Make.com webhook URL
-WEBHOOK_URL = "https://hook.eu1.make.com/ze6g6ouqsvjigxeocgega4ufrh7km9hl"
 
 # File to track already processed tweets
 SEEN_FILE = "seen_tweets.txt"
@@ -53,52 +36,63 @@ def save_seen(seen):
             f.write(link + "\n")
 
 
-def fetch_feed(username):
-    """Try multiple Nitter instances until one returns entries, with HTTP logging and fail tracking."""
-    global NITTER_INSTANCES
+def fetch_latest_tweet(username):
+    """Fetch only the latest tweet using Scrape.do API."""
+    target_url = f"https://twitter.com/{username}"
+    api_url = f"https://api.scrape.do?token={SCRAPE_API_KEY}&url={target_url}"
 
-    for instance in list(NITTER_INSTANCES):  # copy to avoid modifying while iterating
-        url = f"{instance}/{username}/rss"
-        try:
-            response = requests.get(url, timeout=10)
-            print(f"🔎 Checking {url} → Status {response.status_code}")
-
-            if response.status_code != 200:
-                print(f"❌ {instance} returned {response.status_code} for @{username}")
-                INSTANCE_FAILS[instance] += 1
-                if INSTANCE_FAILS[instance] >= FAIL_THRESHOLD:
-                    print(f"🚫 Removing {instance} from list (too many failures)")
-                    NITTER_INSTANCES.remove(instance)
-                continue
-
-            feed = feedparser.parse(response.text)
-            if feed.entries:
-                print(f"✅ Found {len(feed.entries)} tweets for @{username} using {instance}")
-                return feed.entries
-            else:
-                print(f"⚠️ No tweets found for @{username} on {instance}")
-        except Exception as e:
-            print(f"❌ Error fetching @{username} from {instance}: {e}")
-            INSTANCE_FAILS[instance] += 1
-            if INSTANCE_FAILS[instance] >= FAIL_THRESHOLD:
-                print(f"🚫 Removing {instance} from list (too many failures)")
-                NITTER_INSTANCES.remove(instance)
-    return []
-
-
-def send_to_webhook(username, entry):
-    """Send tweet data to Make.com webhook."""
-    data = {
-        "username": username,
-        "title": entry.title,
-        "link": entry.link,
-        "published": entry.published,
-    }
     try:
-        response = requests.post(WEBHOOK_URL, json=data)
-        print(f"Sent tweet from @{username}, status: {response.status_code}")
+        response = requests.get(api_url, timeout=20)
+        if response.status_code != 200:
+            print(f"❌ Failed to fetch @{username}, status {response.status_code}")
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Grab the first <article> (latest tweet)
+        article = soup.select_one("article")
+        if not article:
+            print(f"⚠️ No tweets found for @{username}")
+            return None
+
+        text_block = article.select_one("div[lang]")
+        text = text_block.get_text() if text_block else None
+
+        # Extract media (images/videos)
+        media_urls = []
+        for img in article.select("img"):
+            if "profile" not in img["src"]:  # skip profile pics
+                media_urls.append(img["src"])
+        for video in article.select("video"):
+            if video.has_attr("src"):
+                media_urls.append(video["src"])
+
+        # Extract link (unique identifier)
+        link_tag = article.find("a", href=True)
+        link = f"https://twitter.com{link_tag['href']}" if link_tag else None
+
+        if text and link:
+            return {
+                "username": username,
+                "text": text,
+                "media": media_urls,
+                "link": link
+            }
+
+        return None
+
     except Exception as e:
-        print(f"❌ Error sending webhook for @{username}: {e}")
+        print(f"❌ Error fetching @{username}: {e}")
+        return None
+
+
+def send_to_webhook(tweet):
+    """Send tweet data to Make.com webhook."""
+    try:
+        response = requests.post(WEBHOOK_URL, json=tweet)
+        print(f"Sent latest tweet from @{tweet['username']}, status: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Error sending webhook for @{tweet['username']}: {e}")
 
 
 def main():
@@ -106,15 +100,15 @@ def main():
     updated_seen = set(seen)
 
     for username in USERNAMES:
-        print(f"Fetching feed for @{username}...")
-        entries = fetch_feed(username)
-        for entry in entries:
-            if entry.link not in seen:
-                print(f"➡️ New tweet found for @{username}: {entry.title}")
-                send_to_webhook(username, entry)
-                updated_seen.add(entry.link)
+        print(f"Fetching latest tweet for @{username}...")
+        tweet = fetch_latest_tweet(username)
+        if tweet:
+            if tweet["link"] not in seen:
+                print(f"➡️ New tweet: {tweet['text'][:50]}...")
+                send_to_webhook(tweet)
+                updated_seen.add(tweet["link"])
             else:
-                print(f"Already processed tweet for @{username}: {entry.link}")
+                print(f"Already processed latest tweet: {tweet['link']}")
 
     save_seen(updated_seen)
 
