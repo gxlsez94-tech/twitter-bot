@@ -1,3 +1,38 @@
+import requests
+from bs4 import BeautifulSoup
+import os
+
+# Secrets injected from GitHub Actions
+SCRAPE_API_KEY = os.getenv("SCRAPE_API_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+# List of usernames to monitor
+USERNAMES = [
+    "visegrad24",
+    "MarioNawfal",
+    "illuminatibot",
+    "redpillb0t",
+]
+
+# File to track already processed tweets
+SEEN_FILE = "seen_tweets.txt"
+
+
+def load_seen():
+    """Load already processed tweet links from file."""
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r") as f:
+            return set(line.strip() for line in f)
+    return set()
+
+
+def save_seen(seen):
+    """Save updated set of seen tweet links."""
+    with open(SEEN_FILE, "w") as f:
+        for link in seen:
+            f.write(link + "\n")
+
+
 def fetch_latest_tweet(username):
     """Fetch only the latest tweet using Scrape.do API."""
     target_url = f"https://twitter.com/{username}"
@@ -47,3 +82,34 @@ def fetch_latest_tweet(username):
     except Exception as e:
         print(f"❌ Error fetching @{username}: {e}")
         return None
+
+
+def send_to_webhook(tweet):
+    """Send tweet data to Make.com webhook."""
+    try:
+        response = requests.post(WEBHOOK_URL, json=tweet)
+        print(f"Sent latest tweet from @{tweet['username']}, status: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Error sending webhook for @{tweet['username']}: {e}")
+
+
+def main():
+    seen = load_seen()
+    updated_seen = set(seen)
+
+    for username in USERNAMES:
+        print(f"Fetching latest tweet for @{username}...")
+        tweet = fetch_latest_tweet(username)
+        if tweet:
+            if tweet["link"] not in seen:
+                print(f"➡️ New tweet: {tweet['text'][:50]}...")
+                send_to_webhook(tweet)
+                updated_seen.add(tweet["link"])
+            else:
+                print(f"Already processed latest tweet: {tweet['link']}")
+
+    save_seen(updated_seen)
+
+
+if __name__ == "__main__":
+    main()
