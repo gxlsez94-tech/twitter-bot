@@ -22,4 +22,4 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run bot
-        run: python twitter_bot.py
+        run: python twitter-bot.py
