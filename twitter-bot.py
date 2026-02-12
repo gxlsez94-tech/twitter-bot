@@ -34,12 +34,12 @@ def save_seen(seen):
 
 
 def fetch_latest_tweet(username):
-    """Fetch only the latest tweet using Scrape.do API."""
+    """Fetch only the latest tweet using Scrape.do API with JS rendering."""
     target_url = f"https://twitter.com/{username}"
-    api_url = f"https://api.scrape.do?token={SCRAPE_API_KEY}&url={target_url}"
+    api_url = f"https://api.scrape.do?token={SCRAPE_API_KEY}&url={target_url}&render=true"
 
     try:
-        response = requests.get(api_url, timeout=20)
+        response = requests.get(api_url, timeout=30)
         if response.status_code != 200:
             print(f"❌ Failed to fetch @{username}, status {response.status_code}")
             return None
@@ -47,13 +47,19 @@ def fetch_latest_tweet(username):
         soup = BeautifulSoup(response.text, "html.parser")
 
         # Try multiple selectors for tweet containers
-        article = soup.select_one("article") or soup.select_one('div[data-testid="tweet"]')
+        article = (
+            soup.select_one("article")
+            or soup.select_one('div[data-testid="tweet"]')
+            or soup.select_one('div[data-testid="tweetText"]')
+        )
         if not article:
             print(f"⚠️ No tweets found for @{username}")
+            # Debug: print first 500 chars of HTML to inspect
+            print(response.text[:500])
             return None
 
         # Extract text
-        text_block = article.select_one("div[lang]")
+        text_block = article.select_one("div[lang]") or article.select_one('div[data-testid="tweetText"]')
         text = text_block.get_text() if text_block else None
 
         # Extract media (images/videos)
@@ -84,32 +90,4 @@ def fetch_latest_tweet(username):
         return None
 
 
-def send_to_webhook(tweet):
-    """Send tweet data to Make.com webhook."""
-    try:
-        response = requests.post(WEBHOOK_URL, json=tweet)
-        print(f"Sent latest tweet from @{tweet['username']}, status: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Error sending webhook for @{tweet['username']}: {e}")
-
-
-def main():
-    seen = load_seen()
-    updated_seen = set(seen)
-
-    for username in USERNAMES:
-        print(f"Fetching latest tweet for @{username}...")
-        tweet = fetch_latest_tweet(username)
-        if tweet:
-            if tweet["link"] not in seen:
-                print(f"➡️ New tweet: {tweet['text'][:50]}...")
-                send_to_webhook(tweet)
-                updated_seen.add(tweet["link"])
-            else:
-                print(f"Already processed latest tweet: {tweet['link']}")
-
-    save_seen(updated_seen)
-
-
-if __name__ == "__main__":
-    main()
+def send
