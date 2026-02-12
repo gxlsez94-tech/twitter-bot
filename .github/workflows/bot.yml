@@ -25,4 +25,4 @@ jobs:
         env:
           SCRAPE_API_KEY: ${{ secrets.SCRAPE_API_KEY }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: python twitter_bot.py
+        run: python twitter-bot.py
